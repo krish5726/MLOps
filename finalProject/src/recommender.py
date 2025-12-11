@@ -1,3 +1,15 @@
+
+
+import pandas as pd
+import numpy as np
+import pickle
+from pathlib import Path
+import logging
+
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
+
+
 class MovieRecommender:
     """Main recommender system"""
     
@@ -51,30 +63,70 @@ class MovieRecommender:
         if self.collab_model is None:
             return "Model not loaded!"
         
-        prediction = self.collab_model.predict(user_id, movie_id)
-        return round(prediction.est, 2)
+        try:
+            # Get indices
+            user_index = self.collab_model['user_index']
+            movie_index = self.collab_model['movie_index']
+            
+            if user_id not in user_index or movie_id not in movie_index:
+                # Return average rating if user or movie not in training data
+                return 3.0
+            
+            user_idx = user_index.index(user_id)
+            movie_idx = movie_index.index(movie_id)
+            
+            # Predict using NMF
+            W = self.collab_model['W']
+            H = self.collab_model['H']
+            
+            prediction = np.dot(W[user_idx], H[:, movie_idx])
+            prediction = np.clip(prediction, 0.5, 5.0)
+            
+            return round(float(prediction), 2)
+            
+        except Exception as e:
+            logger.error(f"Error in prediction: {e}")
+            return 3.0  # Return average rating on error
     
     def get_top_n_recommendations(self, user_id, n=10, ratings_df=None):
         """Get top N recommendations for a user"""
         if self.collab_model is None or ratings_df is None:
             return "Model or ratings data not available!"
         
-        # Get all movies
-        all_movies = ratings_df['movieId'].unique()
-        
-        # Get movies already rated by user
-        rated_movies = ratings_df[ratings_df['userId'] == user_id]['movieId'].values
-        
-        # Get unrated movies
-        unrated_movies = [m for m in all_movies if m not in rated_movies]
-        
-        # Predict ratings for unrated movies
-        predictions = []
-        for movie_id in unrated_movies[:100]:  # Limit for performance
-            pred = self.collab_model.predict(user_id, movie_id)
-            predictions.append((movie_id, pred.est))
-        
-        # Sort by predicted rating
-        predictions.sort(key=lambda x: x[1], reverse=True)
-        
-        return predictions[:n]
+        try:
+            user_index = self.collab_model['user_index']
+            movie_index = self.collab_model['movie_index']
+            
+            if user_id not in user_index:
+                return f"User {user_id} not found in training data!"
+            
+            user_idx = user_index.index(user_id)
+            
+            # Get all predictions for this user
+            W = self.collab_model['W']
+            H = self.collab_model['H']
+            user_predictions = np.dot(W[user_idx], H)
+            
+            # Get movies already rated by user
+            rated_movies = ratings_df[ratings_df['userId'] == user_id]['movieId'].values
+            
+            # Create list of (movie_id, predicted_rating) for unrated movies
+            predictions = []
+            for i, movie_id in enumerate(movie_index):
+                if movie_id not in rated_movies:
+                    pred = np.clip(user_predictions[i], 0.5, 5.0)
+                    predictions.append((movie_id, float(pred)))
+            
+            # Sort by predicted rating
+            predictions.sort(key=lambda x: x[1], reverse=True)
+            
+            return predictions[:n]
+            
+        except Exception as e:
+            logger.error(f"Error getting recommendations: {e}")
+            return f"Error: {str(e)}"
+
+
+if __name__ == "__main__":
+    print("Alternative Recommender loaded successfully!")
+    print("This version works with NMF-based collaborative filtering")
